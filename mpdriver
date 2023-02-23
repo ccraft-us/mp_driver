@@ -1,0 +1,325 @@
+#! /bin/ksh
+# ###########################################################################
+# Script      : mpdriver
+# Description : Multi Processing Driver
+#
+# Purpose     : This script is a Multi-Processing driver.  It reads a file
+#               containing one command per line and then executes those
+#               commands in parallel.
+#
+#               The degree of parallelism is set in a configuration file.
+#               The parallelism can be changed on the fly if necessary
+#               by simply updating the configuration file.
+#
+#
+# ###########################################################################
+# Change Log:
+#
+# Date        Description                                      Who
+# ---------   -----------------------------------------------  --------------
+# 20-MAY-2002 Initial creation                                 C. Craft
+# 17-JAN-2010 PID capture problem fixed in ExecuteThread       C. Craft
+#
+# ###########################################################################
+
+#----------------------------------------------------------------------------
+# Name: AbendCleanUp
+#----------------------------------------------------------------------------
+function AbendCleanUp
+{
+	print "abend Detected"
+	CleanUp
+	exit 0
+
+} # End AbendCleanUp
+
+#----------------------------------------------------------------------------
+# Name: ShowUsage
+#----------------------------------------------------------------------------
+function ShowUsage
+{
+	print "Usage: mpdriver [-c <command file>] [-i <init file>] [-d 0|16]"
+	CleanUp
+	exit 0
+
+} # End ShowUsage
+
+#----------------------------------------------------------------------------
+# Name: CleanUp
+#----------------------------------------------------------------------------
+function CleanUp
+{
+	print "Executing Generic Cleanup Function"
+
+	if [ ! -d ${TmpDir} ]
+	then
+		echo "Temp Directory is not a directory!"
+		CleanUp
+	fi
+
+	rm $TmpDir/*
+	rmdir $TmpDir
+	exit 0
+
+} # End CleanUp
+
+#----------------------------------------------------------------------------
+# Name: RunCmds
+# Desc: This function reads the command file and calls a routine to
+#       execute each command.
+#----------------------------------------------------------------------------
+function RunCmds
+{
+
+	#---------------------------------
+	# Read Command File & Run Commands
+	#---------------------------------
+	typeset i j TotalWaitTime LoopCnt
+
+	ThreadCnt=1
+	typeset CmdCnt
+	let CmdCnt=0
+	let ThreadCnt=0
+	cat $cmdfile |while read Line
+        do
+		commentchar=`echo ${Line}|cut -c 1`
+		if [ ${commentchar} = '#' ]
+		then
+			if [ $debug -eq 16 ]
+			then
+				print "Found Comment in cmdfile: ${Line}"
+			fi
+
+		else
+			let CmdCnt=${CmdCnt}+1
+                	CmdLine=${Line}
+			AllocThread
+		fi
+
+	done
+
+	# Wait for all the child processes to complete.
+	# CheckActiveThreads
+	CleanUp
+	return
+
+
+} # End of RunCmds
+
+
+#----------------------------------------------------------------------------
+# Name: AllocThread
+# Desc: Allocate a thread and then execute the command.
+#       If a thread is not available, wait for one.
+#----------------------------------------------------------------------------
+function AllocThread
+{
+
+	if [ $debug -eq 16 ]
+	then
+		print "executing AllocThread"
+		print "Current Thread Count is ${ThreadCnt}"
+	fi
+
+	SlotFound='N'
+	while [ ${SlotFound} = 'N' ]
+	do
+		let Parallelism=`cat ${inifile}|grep parallelism|cut -f2 -d'='`
+		let debug=`cat ${inifile}|grep debug|cut -f2 -d'='`
+		if [ $debug -ne 0 -a $debug -ne 16 ]
+		then
+			print "debug must be 0 or 16"
+			print "reverting to debug 0"
+			debug=0
+		fi
+		if [ $debug -eq 16 ]
+		then
+			print "Current Parallelism is ${Parallelism}"
+		fi
+
+		if [ ${Parallelism} -gt ${ThreadCnt} ]
+		then
+			if [ $debug -eq 16 ]
+			then
+				print "Thread count is less than Parallelism"
+			fi
+			let ThreadCnt=${ThreadCnt}+1
+			let ThreadId=${ThreadCnt}
+			SlotFound='Y'
+			print "Allocating new thread slot.  Thread count increased to ${ThreadCnt}."
+			ExecuteThread
+		else
+			ThreadId=1
+			while [ ${ThreadId} -le ${Parallelism} -a ${SlotFound} = 'N' ]
+			do
+				ps -p ${ThreadPid[${ThreadId}]}>/dev/null 2>&1
+				if [ $? -eq 0 ]
+				then
+					if [ $debug -eq 16 ]
+					then
+						print "Thread ${ThreadId} is still active"
+					fi
+				else
+					print "Open thread slot detected. Spawning new process for slot ${ThreadId}."
+					SlotFound='Y'
+					ExecuteThread
+				fi
+				
+				if [ $debug -eq 16 ]
+				then
+					print "keep waiting for an open thread"
+				fi
+				let ThreadId=${ThreadId}+1
+			done
+			if [ ${SlotFound} = 'N' ]
+			then
+				if [ $debug -eq 16 ]
+				then
+					print "Sleeping to await available thread"
+				fi
+				sleep 4
+			fi
+		fi
+	done
+
+	return
+
+} # End of AllocThread
+
+#----------------------------------------------------------------------------
+# Name: ExecuteThread
+# Desc: Execute the thread in the background.
+#
+#   17-JAN-2010...
+#   Added 1/10th second wait for thread to spwan, wasn't capturing PID in
+#   some cases.  Also changed the "let" command because that wouldn't
+#   reliably capture the PID on OEL5 (only on Thread #12 for some reason).
+#----------------------------------------------------------------------------
+function ExecuteThread
+{
+
+	typeset Script ThreadOut ThreadTmp
+
+	Script="${TmpDir}/${ShellName}_${BackupId}_${ThreadId}.ksh"
+	ThreadOut="${TmpDir}/${ShellName}_${BackupId}_${ThreadId}.out"
+	ThreadTmp="${TmpDir}/${ShellName}_${BackupId}_${ThreadId}.tmp"
+
+	ThreadLog=${TmpDir}/thread_${ThreadId}.log
+
+	if [ $debug -eq 16 ]
+	then
+		print "executing ExecuteThread"
+		print "Thread ID is ${ThreadId}"
+		print "Thread Log is ${ThreadLog}"
+	fi
+
+	#-------------------------------------------
+	# Dynamically build the script
+	#-------------------------------------------
+	echo '---------------------------------------------------------------'
+	print "Executing command at: `date`"
+	print "cmd is: ${CmdLine}"
+	print "echo Started >> ${ThreadLog}" > ${Script}
+	print "${CmdLine}"                    >> ${Script}
+	print "perl -e 'select(undef,undef,undef,.1)'" >> ${Script}
+	print "echo SUCCESS >> ${ThreadLog}" >> ${Script}
+
+	#-------------------------------------------
+	# Spawn sub-shell and capture PID
+	#-------------------------------------------
+	chmod 740 ${Script}
+	${Script} > ${ThreadOut} 2>&1 &
+	# let ThreadPid[${ThreadId}]=$!
+	ThreadPid[${ThreadId}]=$!
+	ThreadFile[${ThreadId}]="${FileName}"
+
+	return
+
+} # End of ExecuteThread
+
+#############################################################################
+# MAIN DRIVER
+#############################################################################
+
+# If we die unexpectedly, try to perform some cleanup.
+trap 'Signal=Y; AbendCleanUp' HUP INT QUIT ABRT TERM
+
+# Initialize variables and setup env.
+OSName=`uname -s`
+ShellName=`basename $0`
+StartDate=`date +"%m%d"`
+StartTime=`date +"%H%M"`
+
+typeset -RZ4 ThreadId
+typeset -RZ4 Parallelism
+typeset -RZ4 BkupDirThrd
+let TotalSize=0
+let ThreadId=0
+let TbsCnt=0
+let FileCnt=0
+let NoRestart=0
+TmpBase=/tmp
+WaitTime=10
+MaxWaitTime=300
+MaxParallelism=32
+
+
+# Get Command Line Arguments
+while getopts c:i: OPT
+do
+	case $OPT in
+		c)	# command file
+			let cmdfile=${OPTARG}
+			;;
+		i)	# init file
+			let inifile=${OPTARG}
+			;;
+		*)	# Invalid option
+			print "Invalid Option: ${OPT}"
+			ShowUsage
+			exit 1
+			;;
+	esac
+done
+
+if [ -z $cmdfile ]
+then
+	cmdfile=cmdfile
+fi
+if [ -z $inifile ]
+then
+	inifile=inifile
+fi
+
+let debug=`cat ${inifile}|grep debug|cut -f2 -d'='`
+
+if [ $debug -ne 0 -a $debug -ne 16 ]
+then
+	echo "You selected debug level ${debug}"
+	echo "debug must be 0 or 16"
+	echo "Debug is configured in the inifile"
+	ShowUsage
+	exit
+fi
+
+TmpDir=${TmpBase}/mpdriver$$
+
+mkdir $TmpDir
+if [ $? -ne 0 ]
+then
+	echo "Failed to make Temp Directory"
+	CleanUp
+fi
+if [ ! -d ${TmpDir} ]
+then
+	echo "Temp Directory is not a directory!"
+	CleanUp
+fi
+
+print "Multi Processing Driver"
+print "Starting at `date`"
+
+RunCmds
+
+exit 0
+

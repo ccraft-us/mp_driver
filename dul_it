@@ -1,0 +1,14 @@
+#################################################################
+# Script Name: dul_it
+#
+# Description: This script accepts one argument as input.  The
+#              argument should contain "owner.table_name".
+#              The script then invokes DUL to unload the specified
+#              table.  The DUL output is sent to a file named
+#              "owner.table_name.dulout".
+# 
+#################################################################
+table_name=${1}
+dul <<[]  >${table_name}.dulout
+unload table ${table_name} ;
+[]

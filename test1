@@ -1,0 +1,7 @@
+cat testfile |while read Line
+do
+	commentchar=`echo ${Line}|cut -c1`
+	echo $commentchar
+
+done
+

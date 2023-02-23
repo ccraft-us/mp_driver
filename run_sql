@@ -1,0 +1,11 @@
+export ORAENV_ASK=NO
+export ORACLE_SID=sv
+. oraenv
+sqlplus /nolog <<[] >/dev/null
+connect ccraft/chris@sv
+select 'Hello world' from dual;
+exec dbms_lock.sleep(25);
+select instance_name from v\$instance;
+[]
+sleep 1
+

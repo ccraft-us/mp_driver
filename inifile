@@ -1,0 +1,8 @@
+# #########################################################
+# Initialization Parameter file for mpdriver
+#
+# Parameters are specfied one per line
+#
+# #########################################################
+parallelism=4
+debug=16

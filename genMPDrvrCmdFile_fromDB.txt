@@ -1,0 +1,14 @@
+Chris,
+ 
+See the attached file.
+ 
+# -- Equivalent to running the following query against the .dat files:
+# --
+# -- SELECT 'dul_it ' || u.name || '.' || o.name
+# -- FROM USER$ u, OBJ$ o, TAB$ t
+# -- WHERE u.user# = o.owner#
+# -- AND o.obj# = t.obj#
+# -- /
+You can run this and it'll generate a long listing (every table for every user).  Some nice additions would be an exclusion list file, but for now you could just use grep to extract the ones you want.
+ 
+Kevin

@@ -1,0 +1,53 @@
+#!/bin/sh
+#set -x
+# ------------------------------------------------------------------------------
+# -- filename: genMPDrvrCmdFile
+# --
+# -- description: Generate a Command File for the DUL MP Driver
+# --
+# -- Equivalent to running the following query against the .dat files:
+# --
+# -- SELECT u.name, o.name
+# -- FROM USER$ u, OBJ$ o, TAB$ t
+# -- WHERE u.user# = o.owner#
+# -- AND o.obj# = t.obj#
+# -- /
+# --
+# ------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+# Prereqs
+# ------------------------------------------------------------------------------
+
+if [ ! -f USER.dat -o ! -f OBJ.dat -o ! -f TAB.dat ] ; then
+  echo "Missing .dat files.  Need USER.dat, OBJ.dat and TAB.dat"
+  exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# Main Logic
+# ------------------------------------------------------------------------------
+
+# SELECT user#, name FROM USER$ u
+#
+touch dul.deny
+grep -v -f dul.deny USER.dat | while read USER_DAT_LINE
+do
+        USER_USERNO=`echo ${USER_DAT_LINE} | cut -f1 -d" "`
+        USER_NAME=`echo ${USER_DAT_LINE} | cut -f2 -d" "`
+
+        # SELECT * FROM OBJ$ o WHERE o.OWNER# = u.USER#
+        #
+        grep "^\"[0-9]*\" \"[0-9]*\" ${USER_USERNO}" OBJ.dat |cut -f2 -d: | while read OBJ_DAT_LINE
+        do
+                OBJ_OBJNO=`echo ${OBJ_DAT_LINE} | cut -f1 -d" "`
+                OBJ_NAME=`echo ${OBJ_DAT_LINE} | cut -f4 -d" "`
+
+                # SELECT * FROM TAB$ t WHERE t.obj# = o.obj#
+                #
+                grep "^${OBJ_OBJNO}" TAB.dat |cut -f2 -d: | while read TAB_DAT_LINE
+                do
+                        echo "dul_it ${USER_NAME}.${OBJ_NAME}" | sed 's/"//g'
+                done
+        done
+done
